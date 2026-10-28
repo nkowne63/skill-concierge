@@ -1,0 +1,17 @@
+# Codex profile for skill-concierge: the workspace sandbox plus HTTP to this machine only.
+# Install: cp <skill>/codex/concierge.config.toml ~/.codex/   Use: codex -p concierge
+# It replaces sandbox_mode (including danger-full-access) for that session; the internet stays blocked.
+default_permissions = "concierge"
+
+[features]
+network_proxy = true # experimental in Codex 0.165; enforces the domain rules below
+
+[permissions.concierge]
+extends = ":workspace"
+
+[permissions.concierge.filesystem]
+"~/.local/state/skill-concierge" = "write" # the editable UI (ui.md) lives in the server's data directory
+
+[permissions.concierge.network]
+enabled = true
+domains = { "127.0.0.1" = "allow", "localhost" = "allow" }

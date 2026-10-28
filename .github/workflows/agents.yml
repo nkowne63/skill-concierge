@@ -1,0 +1,160 @@
+# Re-verifies the skill against the latest omp, Claude Code and Codex releases with a scripted mock model
+# (ci/agent-e2e.ts; no real model API is called). No agent runs with full-access permissions: Claude Code is
+# tested with only a curl/sleep allowlist and again inside its Bash sandbox, Codex with the shipped
+# localhost-only profile. An agent version that already passed with the same skills/ and ci/ content is
+# skipped: a cache entry per (agent, version, content hash) marks the pass.
+name: agents
+on:
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Test every agent even if this version already passed
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'skills/**'
+      - 'ci/**'
+      - '.github/workflows/agents.yml'
+permissions:
+  contents: read
+concurrency:
+  group: agents-${{ github.ref }}
+jobs:
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: latest
+        run: |
+          hash='${{ hashFiles('skills/**', 'ci/**', '.github/workflows/agents.yml') }}'
+          codex=$(npm view @openai/codex version)
+          claude=$(npm view @anthropic-ai/claude-code version)
+          omp=$(npm view @oh-my-pi/pi-coding-agent version)
+          {
+            echo "codex=$codex"
+            echo "claude=$claude"
+            echo "omp=$omp"
+            echo "codex_key=agent-e2e-codex-$codex-$hash"
+            echo "claude_key=agent-e2e-claude-$claude-$hash"
+            echo "omp_key=agent-e2e-omp-$omp-$hash"
+          } >> "$GITHUB_OUTPUT"
+      - id: codex
+        uses: actions/cache/restore@v4
+        with:
+          path: .agent-e2e-marker
+          key: ${{ steps.latest.outputs.codex_key }}
+          lookup-only: true
+      - id: claude
+        uses: actions/cache/restore@v4
+        with:
+          path: .agent-e2e-marker
+          key: ${{ steps.latest.outputs.claude_key }}
+          lookup-only: true
+      - id: omp
+        uses: actions/cache/restore@v4
+        with:
+          path: .agent-e2e-marker
+          key: ${{ steps.latest.outputs.omp_key }}
+          lookup-only: true
+      - id: plan
+        env:
+          FORCE: ${{ inputs.force || false }}
+          AGENTS: |
+            codex @openai/codex ${{ steps.latest.outputs.codex }} ${{ steps.latest.outputs.codex_key }} ${{ steps.codex.outputs.cache-hit || false }}
+            claude @anthropic-ai/claude-code ${{ steps.latest.outputs.claude }} ${{ steps.latest.outputs.claude_key }} ${{ steps.claude.outputs.cache-hit || false }}
+            omp @oh-my-pi/pi-coding-agent ${{ steps.latest.outputs.omp }} ${{ steps.latest.outputs.omp_key }} ${{ steps.omp.outputs.cache-hit || false }}
+        run: |
+          matrix='[]'
+          {
+            echo '| Agent | Package | Latest version | Status |'
+            echo '|---|---|---|---|'
+          } >> "$GITHUB_STEP_SUMMARY"
+          while read -r agent package version key hit; do
+            [ -n "$agent" ] || continue
+            if [ "$hit" = true ] && [ "$FORCE" != true ]; then
+              status='already passed (skipped)'
+            else
+              status='testing'
+              matrix=$(jq -c --arg a "$agent" --arg p "$package" --arg v "$version" --arg k "$key" \
+                '. + [{agent: $a, package: $p, version: $v, key: $k}]' <<< "$matrix")
+            fi
+            echo "| $agent | \`$package\` | $version | $status |" >> "$GITHUB_STEP_SUMMARY"
+          done <<< "$AGENTS"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    needs: versions
+    if: needs.versions.outputs.matrix != '[]'
+    name: ${{ matrix.agent }} ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.versions.outputs.matrix) }}
+    env:
+      AGENT: ${{ matrix.agent }}
+      PACKAGE: ${{ matrix.package }}
+      VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: skills/skill-concierge/package-lock.json
+      # The omp package runs on Bun (`#!/usr/bin/env bun`, engines.bun).
+      - if: matrix.agent == 'omp'
+        uses: oven-sh/setup-bun@v2
+      - name: Install ${{ matrix.package }}@${{ matrix.version }}
+        run: |
+          if [ "$AGENT" = omp ]; then
+            bun install -g "$PACKAGE@$VERSION"
+            bun pm bin -g >> "$GITHUB_PATH"
+          else
+            npm install -g "$PACKAGE@$VERSION"
+          fi
+      # Claude Code's sandbox runs commands in bubblewrap and bridges its proxy with socat.
+      - if: matrix.agent == 'claude'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap socat
+      # Ubuntu 24.04 blocks unprivileged user namespaces, which the Codex and Claude Code sandboxes
+      # (bubblewrap) need.
+      - if: matrix.agent == 'codex' || matrix.agent == 'claude'
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - run: npm ci
+        working-directory: skills/skill-concierge
+      # Claude Code runs twice: permission allowlist (`claude`) and Bash sandbox (`claude-sandbox`).
+      - run: |
+          modes=$AGENT
+          if [ "$AGENT" = claude ]; then modes='claude claude-sandbox'; fi
+          status=0
+          for mode in $modes; do node ci/agent-e2e.ts "$mode" || status=1; done
+          exit $status
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-e2e-${{ matrix.agent }}-${{ matrix.version }}
+          path: |
+            /tmp/concierge-e2e-*/*.log
+            /tmp/concierge-e2e-*/model-requests.json
+          if-no-files-found: ignore
+      - run: |
+          mkdir -p .agent-e2e-marker
+          echo "$PACKAGE@$VERSION passed at $GITHUB_SHA" > ".agent-e2e-marker/$AGENT"
+          echo "**$AGENT**: \`$PACKAGE@$VERSION\` passed" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/cache/save@v4
+        with:
+          path: .agent-e2e-marker
+          key: ${{ matrix.key }}

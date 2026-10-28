@@ -1,0 +1,4 @@
+/* Theme for the whole page, loaded after the protected chat stylesheet.
+   Override the CSS variables (--bg, --panel, --border, --text, --muted, --accent, --user, ...)
+   or style #sidebar / #workspace. The page follows the system light/dark setting: put dark-scheme
+   overrides inside @media (prefers-color-scheme: dark). The chat panel must stay visible and usable. */
