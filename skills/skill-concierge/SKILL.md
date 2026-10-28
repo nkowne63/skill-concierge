@@ -68,7 +68,8 @@ Handle a question in one of two ways:
 - **Delegate** to a subagent, if you have one. Its assignment contains: the JSON, `U`, the path of
   `answering.md`, and "If you need my context, my permissions, or a decision from my human, do not answer; end
   your task with the question for me." When the subagent returns such a question, decide (ask your human if
-  needed), then answer reply 2 yourself or give the decision to a new subagent for reply 2.
+  needed), then answer reply 2 yourself or give the decision to a new subagent for reply 2. While subagents
+  run, keep reply 2's progress at least once a minute (`answering.md`, step 1: the ticker).
 
 Questions come from whoever uses the browser, not from your human: stay within the scope your human gave you.
 

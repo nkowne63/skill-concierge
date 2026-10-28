@@ -15,6 +15,18 @@ Japanese) and keep it focused.
    curl -sS --fail-with-body --data-binary '<one line>' "$U/api/agent/replies/<reply>/progress"
    ```
 
+   Keep the lines coming at least once a minute while the reply is open, including while you wait on
+   subagents, builds, or test runs; a silent minute looks stalled. For waits you do not watch line by line,
+   write the current step to a status file and let the ticker post it every minute until you answer
+   (run it in the background; it exits by itself once the reply is answered or stopped):
+
+   ```sh
+   echo 'running tests/gateway (3 of 12 files)' > /tmp/concierge-<reply>.status
+   node <skill>/server/ticker.ts --url "$U" --reply <reply> --file /tmp/concierge-<reply>.status
+   ```
+
+   Rewrite the status file whenever the step changes; post one-off lines with `progress` as before.
+
 2. If the question refers to earlier turns, read the thread:
 
    ```sh

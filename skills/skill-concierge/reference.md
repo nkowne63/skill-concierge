@@ -43,6 +43,9 @@ curl -fsS "$U/api/state?chat=$T" | jq -r --argjson r "$R" '.messages[] | select(
 
 # stop thread T's reply in progress
 curl -fsS -X POST "$U/api/chats/$T/abort"
+
+# while busy elsewhere: post the first line of a status file to reply R every minute (exits when R ends)
+node <skill>/server/ticker.ts --url "$U" --reply R --file /tmp/concierge-R.status [--every 60]
 ```
 
 ## Server
