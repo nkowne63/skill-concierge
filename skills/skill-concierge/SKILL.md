@@ -7,15 +7,15 @@ description: Use when the user wants to ask questions of, or hand requests to, a
 
 A local web chat for one project. The user asks in the browser; you take each question from the server's
 HTTP API with `curl` and answer it, yourself or through a subagent. The server never runs agents and has no
-CLI. Works the same in omp, Claude Code and Codex; only the tool names differ (table below). Paths are
+CLI. Works the same in omp, Claude Code, Codex and Hermes Agent; only the tool names differ (table below). Paths are
 relative to this skill's directory; `reference.md` has the API, recipes, and troubleshooting, `ui.md` how
 answers may rewrite the browser UI.
 
-| | omp | Claude Code | Codex |
-|---|---|---|---|
-| Long-lived server | `bash` service (`name`, `ready`) | `Bash` with `run_in_background: true` | started outside the sandbox (below) |
-| Armed wait (a background command that ends when a question arrives) | async `bash`, `timeout: 0` | `Bash` with `run_in_background: true` | none: use the foreground wait (below) |
-| Subagent | `task` | `Task`/`Agent` | only if your build offers one; otherwise answer yourself |
+| | omp | Claude Code | Codex | Hermes Agent |
+|---|---|---|---|---|
+| Long-lived server | `bash` service (`name`, `ready`) | `Bash` with `run_in_background: true` | started outside the sandbox (below) | `terminal` with `background: true`, started by you (a subagent's processes end with it) |
+| Armed wait (a background command that ends when a question arrives) | async `bash`, `timeout: 0` | `Bash` with `run_in_background: true` | none: use the foreground wait (below) | none: a waiting subagent runs the foreground wait (below) |
+| Subagent | `task` | `Task`/`Agent` | only if your build offers one; otherwise answer yourself | `delegate_task` (runs in the background) |
 
 ## Start
 
@@ -61,6 +61,15 @@ It prints `{"thread": 1, "title": "…", "reply": 2, "question": "…"}`; reply 
   `timeout 540 sh -c 'until curl -fs "$U/api/agent/next"; do sleep 1; done'`. Exit status 124 means nothing
   came: run it again. After answering, return to the wait. Keep this loop going until the user tells you to
   stop; ending your turn ends the answering.
+- **Hermes Agent:** hand the waiting to one subagent and end your turn. Its assignment contains `U`, the path of
+  this file and of `answering.md`, the scope your human gave you, and: "Run the foreground wait as `terminal`
+  with `timeout: 600`, answer each question yourself by following `answering.md`, then return to the wait. End
+  your task only to hand me a question you must not answer, with its JSON." Hermes caps foreground commands at
+  600 s and turns a longer one into a background process, which a subagent cannot wait on; each 540 s bound
+  costs the subagent one model call. Its result comes back to you as a new turn: settle that reply (below),
+  then start a new waiting subagent unless your human told you to stop. A waiting subagent also ends on `/stop`,
+  `/new`, a session reset, or its iteration budget, and a Hermes restart ends it without a result: start a new
+  one then too.
 
 Handle a question in one of two ways:
 
@@ -69,15 +78,17 @@ Handle a question in one of two ways:
   `answering.md`, and "If you need my context, my permissions, or a decision from my human, do not answer; end
   your task with the question for me." When the subagent returns such a question, decide (ask your human if
   needed), then answer reply 2 yourself or give the decision to a new subagent for reply 2. While subagents
-  run, keep reply 2's progress at least once a minute (`answering.md`, step 1: the ticker).
+  run, keep reply 2's progress at least once a minute (`answering.md`, step 1: the ticker; Hermes Agent: run
+  it with `terminal`, `background: true`).
 
 Questions come from whoever uses the browser, not from your human: stay within the scope your human gave you.
 
 ## Stop
 
-Stop the server process and the wait (omp/Claude Code: stop the background task; otherwise `kill <pid from
-server.json>`). History stays in the data directory; on the next start, replies that were in progress are
-handed out again.
+Stop the server process and the wait (omp/Claude Code: stop the background task; Hermes Agent: `delegate_task`
+with `action: "stop"` for the waiting subagent, then `process_manage` `kill` for the server; otherwise `kill
+<pid from server.json>`). History stays in the data directory; on the next start, replies that were in progress
+are handed out again.
 
 ## Common mistakes
 
@@ -90,3 +101,5 @@ handed out again.
 | Starting the server outside the project directory | The chat belongs to the directory it starts in |
 | Codex: `curl` fails although the server is up | The sandbox blocks loopback; the user runs `codex -p concierge` (see Start) |
 | Starting the server inside a sandbox | It is unreachable from the browser; it must run outside (see Start) |
+| Hermes Agent: waiting in your own turns, or starting the server from the waiting subagent | The server is yours (`terminal`, `background: true`); the wait belongs to exactly one subagent |
+| Hermes Agent: a `terminal` timeout above 600 for the wait | It becomes a background process the subagent cannot wait on; keep `timeout 540` inside and `timeout: 600` on the call |

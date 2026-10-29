@@ -1,6 +1,6 @@
 # skill-concierge
 
-ブラウザのチャットからエージェントに質問・依頼できる skill（omp / Claude Code / Codex）。
+ブラウザのチャットからエージェントに質問・依頼できる skill（omp / Claude Code / Codex / Hermes Agent）。
 
 ![PC とスマホでの画面（ダークモード）: チャット一覧、UI ワークスペース、進捗つきの返答](docs/screenshot.png)
 
@@ -32,7 +32,7 @@
 ## 必要なもの
 
 - Node.js 24.3 以上（24.17 で確認）
-- omp（18.12.6 で確認）、Codex CLI（0.165.0 で確認）、Claude Code（2.1.312 で確認）のいずれか。いずれも full access なしで動く（下の「権限と sandbox」）
+- omp（18.12.6 で確認）、Codex CLI（0.165.0 で確認）、Claude Code（2.1.312 で確認）、Hermes Agent（v0.22.5 向けに手順を記載、CI の通し試験は無し）のいずれか。いずれも full access なしで動く（下の「権限と sandbox」）
 
 ```sh
 cd skills/skill-concierge
@@ -47,7 +47,7 @@ npm run typecheck
 
 ### エージェントから
 
-インストール後、対象プロジェクトのディレクトリでエージェントを起動し、skill を呼ぶ（omp: `/skill:skill-concierge`、Claude Code: `/skill-concierge`、Codex: `$skill-concierge`）。omp と Claude Code は待ち受けをバックグラウンドコマンドで行い、Codex は同等の機能が無いので、時間を区切ったフォアグラウンドの待ち受けを繰り返し、止めるよう言われるまで答え続ける。
+インストール後、対象プロジェクトのディレクトリでエージェントを起動し、skill を呼ぶ（omp: `/skill:skill-concierge`、Claude Code: `/skill-concierge`、Codex: `$skill-concierge`、Hermes Agent: チャットで頼む）。omp と Claude Code は待ち受けをバックグラウンドコマンドで行い、Codex は同等の機能が無いので、時間を区切ったフォアグラウンドの待ち受けを繰り返し、止めるよう言われるまで答え続ける。Hermes Agent はサーバーを自分で常駐させ、待ち受けを 1 つの subagent（`delegate_task`）に任せる。subagent が時間を区切ったフォアグラウンドの待ち受けを繰り返して自分で答え、親の判断が要る質問のときだけ終わって親に戻す。親はそれに答えてから、新しい待ち受けの subagent を立てる。
 
 エージェントは SKILL.md に従って、プロジェクトのディレクトリでサーバーを常駐プロセスとして起動し、URL を返す。sandbox の中のエージェント（Codex、sandbox を有効にした Claude Code）はサーバーを自分では起動せず、`--status` で起動済みのサーバーを探し、無ければ端末での起動を頼む（sandbox の中で起動したサーバーにはブラウザから届かないため）。続けて次の質問を async で待ち受け、届いたら自分で答えるか subagent に任せて、すぐ待ち受けを再開する。subagent が親エージェントの文脈や判断を必要とするときは、返答せずに親に戻し、親が判断して答える。誰も待ち受けていない間に送られた質問は「待機中」のまま残る。
 
@@ -64,6 +64,7 @@ cd skill-concierge/skills/skill-concierge && npm install
 ln -s "$PWD" ~/.omp/agent/skills/skill-concierge     # omp
 ln -s "$PWD" ~/.claude/skills/skill-concierge        # Claude Code
 ln -s "$PWD" ~/.agents/skills/skill-concierge        # Codex
+ln -s "$PWD" ~/.hermes/skills/skill-concierge        # Hermes Agent
 ```
 
 ### 権限と sandbox
